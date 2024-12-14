@@ -5,6 +5,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 import joblib
+import coremltools as ct
 
 # Action mapping
 action_map = {"Hit":0, "Stand":1, "Double Down":2, "Split":3}
@@ -128,46 +129,93 @@ else:
 
 data.to_csv("training_with_probs_data.csv", index=False)
 
+
+# Train models and save to .mlmodel files
 X = data[['player_total','dealer_upcard','is_soft','num_decks','dealer_hits_soft_17','can_split','pair_rank_encoded']]
 y = data[['action_code','BustProbabilityIfHit','ImproveHandWithoutBustingIfHit','IfStandOddsDealersSecondCardMakesThemBeatUs']]
 
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-model = RandomForestRegressor(n_estimators=100, random_state=42)
-model.fit(X_train, y_train)
-y_pred = model.predict(X_test)
+# Train individual models:
+model_action_code = RandomForestRegressor(n_estimators=100, random_state=42)
+model_action_code.fit(X, y['action_code'])
 
-overall_score = model.score(X_test, y_test)
-print(f"Overall R² Score on test set: {overall_score:.4f}")
+model_bust = RandomForestRegressor(n_estimators=100, random_state=42)
+model_bust.fit(X, y['BustProbabilityIfHit'])
 
-target_names = ['action_code','BustProbabilityIfHit','ImproveHandWithoutBustingIfHit','IfStandOddsDealersSecondCardMakesThemBeatUs']
-for i, name in enumerate(target_names):
-    y_true_col = y_test.iloc[:, i]
-    y_pred_col = y_pred[:, i]
-    r2 = r2_score(y_true_col, y_pred_col)
-    mae = mean_absolute_error(y_true_col, y_pred_col)
-    mse = mean_squared_error(y_true_col, y_pred_col)
+model_improve = RandomForestRegressor(n_estimators=100, random_state=42)
+model_improve.fit(X, y['ImproveHandWithoutBustingIfHit'])
+
+model_dealer = RandomForestRegressor(n_estimators=100, random_state=42)
+model_dealer.fit(X, y['IfStandOddsDealersSecondCardMakesThemBeatUs'])
+
+
+# Evaluate each model on test set
+def evaluate_model(model, X_test, y_true, name):
+    y_pred = model.predict(X_test)
+    r2 = r2_score(y_true, y_pred)
+    mae = mean_absolute_error(y_true, y_pred)
+    mse = mean_squared_error(y_true, y_pred)
     rmse = np.sqrt(mse)
-    print(f"\nMetrics for {name}:")
+    print(f"\n{name}:")
     print(f"  R²: {r2:.4f}")
     print(f"  MAE: {mae:.4f}")
     print(f"  MSE: {mse:.4f}")
     print(f"  RMSE: {rmse:.4f}")
 
-print("\nSample of Actual vs Predicted (first 10 test samples):")
-sample_size = min(10, len(y_test))
-comparison_df = pd.DataFrame({
-    'player_total': X_test.iloc[:sample_size]['player_total'],
-    'dealer_upcard': X_test.iloc[:sample_size]['dealer_upcard'],
-    'action_code_actual': y_test.iloc[:sample_size]['action_code'],
-    'action_code_pred': y_pred[:sample_size, 0],
-    'BustProbIfHit_actual': y_test.iloc[:sample_size]['BustProbabilityIfHit'],
-    'BustProbIfHit_pred': y_pred[:sample_size, 1],
-    'ImproveIfHit_actual': y_test.iloc[:sample_size]['ImproveHandWithoutBustingIfHit'],
-    'ImproveIfHit_pred': y_pred[:sample_size, 2],
-    'DealerBeatsIfStand_actual': y_test.iloc[:sample_size]['IfStandOddsDealersSecondCardMakesThemBeatUs'],
-    'DealerBeatsIfStand_pred': y_pred[:sample_size, 3],
-})
-print(comparison_df)
+# Evaluate action_code model
+evaluate_model(model_action_code, X_test, y_test['action_code'], "action_code")
 
-joblib.dump(model, "multi_output_model.joblib")
+# Evaluate BustProbabilityIfHit model
+evaluate_model(model_bust, X_test, y_test['BustProbabilityIfHit'], "BustProbabilityIfHit")
+
+# Evaluate ImproveHandWithoutBustingIfHit model
+evaluate_model(model_improve, X_test, y_test['ImproveHandWithoutBustingIfHit'], "ImproveHandWithoutBustingIfHit")
+
+# Evaluate IfStandOddsDealersSecondCardMakesThemBeatUs model
+evaluate_model(model_dealer, X_test, y_test['IfStandOddsDealersSecondCardMakesThemBeatUs'], "IfStandOddsDealersSecondCardMakesThemBeatUs")
+
+
+# Save each model as coreML file
+print("\nExporting models to CoreML...")
+
+# Define your input features
+input_features = ["player_total","dealer_upcard","is_soft","num_decks","dealer_hits_soft_17","can_split","pair_rank_encoded"]
+
+# Convert and save model_action_code
+coreml_model_action = ct.converters.sklearn.convert(
+    model_action_code,
+    input_features,                # feature names
+    "action_code"                  # single output label name
+)
+coreml_model_action.save("ActionCodeModel.mlmodel")
+print("ActionCodeModel.mlmodel saved.")
+
+# Convert and save model_bust
+coreml_model_bust = ct.converters.sklearn.convert(
+    model_bust,
+    input_features,
+    "BustProbabilityIfHit"
+)
+coreml_model_bust.save("BustProbabilityModel.mlmodel")
+print("BustProbabilityModel.mlmodel saved.")
+
+# Convert and save model_improve
+coreml_model_improve = ct.converters.sklearn.convert(
+    model_improve,
+    input_features,
+    "ImproveHandWithoutBustingIfHit"
+)
+coreml_model_improve.save("ImproveHandModel.mlmodel")
+print("ImproveHandModel.mlmodel saved.")
+
+# Convert and save model_dealer
+coreml_model_dealer = ct.converters.sklearn.convert(
+    model_dealer,
+    input_features,
+    "IfStandOddsDealersSecondCardMakesThemBeatUs"
+)
+coreml_model_dealer.save("DealerBeatModel.mlmodel")
+print("DealerBeatModel.mlmodel saved.")
+
+print("All models successfully converted to .mlmodel files.")
