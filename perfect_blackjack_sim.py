@@ -115,7 +115,7 @@ if __name__ == "__main__":
     # can_split: 0
     # pair_rank: None (or empty)
 
-    # loop 50 times for more data
+    # loop 20 times for more data
     for _ in range(20):
         for player_total in range(4, 22):
             for dealer_upcard in range(2, 12):
